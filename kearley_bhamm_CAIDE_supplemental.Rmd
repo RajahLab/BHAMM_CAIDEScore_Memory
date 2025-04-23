@@ -1,0 +1,632 @@
+---
+title: "Data Analyses Script (Supplemental Materials) for the project, Association Between CAIDE Risk Score and Episodic Memory in Middle-Aged Females: The Impact of Natural Menopause"
+author: "Julia Kearley, McGill University"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+    code_folding: hide
+---
+
+> **Note:** This script is for the **Supplemental Materials Analyses** to the manuscript:
+>
+> *Kearley, J. et al. (2025). Association Between CAIDE Risk Score and Episodic Memory in Middle-Aged Females: The Impact of Natural Menopause.*
+
+## Reproducibility Requirements
+
+- **R version:** 4.3 or later
+- **Required R packages:** (see loaded libraries below)
+- **Data:** Saved R objects from `Kearley_bhamm_memory_rf_script2.rmd`
+
+---
+
+## Analysis Overview
+
+### Sup1 (Figure S2): Modified CAIDE Score (Excluding Age Points)
+- Summary statistics (overall and by group)
+- Mann-Whitney U test
+- Histogram by menopause status
+
+### Sup2 (Table S1): LRT Tests (CS retrieval ~ Task × CAIDE)
+- Premenopausal and postmenopausal groups
+
+### Sup3 (Table S2): LRT Tests (Novelty detection ~ Task × CAIDE)
+- Premenopausal and postmenopausal groups
+
+### Sup4 (Table S3): Between-Group Mixed-Effect Linear Regressions — CS and CR (Models 1.1a & 1.1b)
+- Task × group_var interaction and marginal effects
+
+### Sup5 (Table S4): Stepwise Regression — CS
+- Predictors: task, menopause group, age, and education
+- Final model based on AIC selection
+
+### Sup6 (Table S5): Stepwise Regression — CR
+- Same procedure as Sup5 for novelty detection
+
+### Sup7 (Table S6): Post Hoc — Interaction Between Age at FMP and CAIDE
+- Investigates age at final menstrual period (FMP) as moderator of CAIDE × CS
+
+### Sup8 (Table S7): Mediation Analysis — CAIDE as Mediator
+- Tests if CAIDE mediates menopause status → CS accuracy
+- Manual and lavaan SEM approach
+- Includes binned CAIDE and bootstrapping
+
+### Sup9 (Table S8): Mixed-Effects Models — CAIDE Continuous Predicting CS
+- Separate models for pre- and post-menopause groups
+- Task and CAIDE predicting CS accuracy
+
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(here)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(stats)
+library(performance)
+library(emmeans)
+library(lme4)
+library(rstatix)
+library(car)
+library(ggpubr)
+library(stringr)
+library(broom)
+library(GGally)
+library(tidyverse)
+library(writexl)
+library(interactions)
+library(jtools)
+```
+
+```{r}
+apatheme1 <- theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.line = element_line(),
+        text = element_text(family='Times', size = 20),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5, size = 30))
+
+apatheme2 <- theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        text = element_text(family='Times', size = 20),
+        plot.title = element_text(hjust = 0.5, size = 30))
+```
+
+```{r}
+load("supplemental_objects_Jan13_2025")
+```
+
+## Sup1 (Figure S2): Modified CAIDE Score (Excluding Age Points)
+
+```{r}
+cleaned_data_df %>%
+  summarise(mean = round(mean(CAIDE_no_age), 2),
+            sd = round(sd(CAIDE_no_age), 2),
+            min = min(CAIDE_no_age),
+            max = max(CAIDE_no_age))
+
+cleaned_data_df %>%
+  group_by(group_var) %>%
+  summarise(mean = round(mean(CAIDE_no_age), 2),
+            sd = round(sd(CAIDE_no_age), 2),
+            min = min(CAIDE_no_age),
+            max = max(CAIDE_no_age))
+
+cleaned_data_df %>%
+  count(CAIDE_no_age, group_var) %>%
+  mutate(Freq = n / sum(n))
+
+wilcox.test(as.numeric(CAIDE_no_age) ~ group_var, data = cleaned_data_df, exact=FALSE)
+
+cleaned_data_df$CAIDE_no_age <- as.factor(cleaned_data_df$CAIDE_no_age)
+
+sup_caide_p <- ggplot(cleaned_data_df, aes(x = CAIDE_no_age, fill = group_var)) +
+  geom_histogram(position = "dodge", stat = "count") +
+  scale_fill_manual(name = "Menopause Group",
+                    labels = c("Premenopausal", "Postmenopausal"),
+                    values = c("#0072B2", "#D55E00")) +
+  scale_y_continuous(limits = c(0, 12), breaks = seq(0, 12, 2)) +
+  labs(x = "Modified CAIDE Risk Score\n(No age points)", y = "Count") +
+  theme_pubclean() +
+  theme(legend.position = "right")
+
+sup_caide_p
+```
+
+## Sup2 (Table S1): LRT for Models Predicting CS from CAIDE score (Analysis #3 in paper) — Premenopausal
+
+```{r}
+contrasts(cs_acc_CAIDE_pre$task) <- contr.sum(2)
+
+lmm_CAIDE_cs_pre_0 <- lmer(cs_rate ~ task + (1|id), data = cs_acc_CAIDE_pre, REML = FALSE)
+lmm_CAIDE_cs_pre_1 <- lmer(cs_rate ~ task + CAIDE + (1|id), data = cs_acc_CAIDE_pre, REML = FALSE)
+lmm_CAIDE_cs_pre_2 <- lmer(cs_rate ~ task * CAIDE + (1|id), data = cs_acc_CAIDE_pre, REML = FALSE)
+
+lrt_pre <- anova(lmm_CAIDE_cs_pre_0, lmm_CAIDE_cs_pre_1, lmm_CAIDE_cs_pre_2)
+as.data.frame(lrt_pre)
+
+library(MuMIn)
+r.squaredGLMM(lmm_CAIDE_cs_pre_0)
+r.squaredGLMM(lmm_CAIDE_cs_pre_1)
+r.squaredGLMM(lmm_CAIDE_cs_pre_2)
+```
+
+## Sup2 (continued): Postmenopausal Group
+
+```{r}
+contrasts(cs_acc_CAIDE_post$task) <- contr.sum(2)
+
+lmm_CAIDE_cs_post_0 <- lmer(cs_rate ~ task + (1|id), data = cs_acc_CAIDE_post, REML = FALSE)
+lmm_CAIDE_cs_post_1 <- lmer(cs_rate ~ task + CAIDE + (1|id), data = cs_acc_CAIDE_post, REML = FALSE)
+lmm_CAIDE_cs_post_2 <- lmer(cs_rate ~ task * CAIDE + (1|id), data = cs_acc_CAIDE_post, REML = FALSE)
+
+lrt_post <- anova(lmm_CAIDE_cs_post_0, lmm_CAIDE_cs_post_1, lmm_CAIDE_cs_post_2)
+as.data.frame(lrt_post)
+```
+
+## Sup3 (Table S2): Novelty Detection Models — Premenopausal
+
+```{r}
+contrasts(cr_acc_CAIDE_pre$task) <- contr.sum(2)
+
+lmm_CAIDE_cr_pre_0 <- lmer(cr_rate ~ task + (1|id), data = cr_acc_CAIDE_pre, REML = FALSE)
+lmm_CAIDE_cr_pre_1 <- lmer(cr_rate ~ task + CAIDE + (1|id), data = cr_acc_CAIDE_pre, REML = FALSE)
+lmm_CAIDE_cr_pre_2 <- lmer(cr_rate ~ task * CAIDE + (1|id), data = cr_acc_CAIDE_pre, REML = FALSE)
+
+anova(lmm_CAIDE_cr_pre_0, lmm_CAIDE_cr_pre_1, lmm_CAIDE_cr_pre_2)
+```
+
+## Sup3 (continued): Postmenopausal Group
+
+```{r}
+contrasts(cr_acc_CAIDE_post$task) <- contr.sum(2)
+
+lmm_CAIDE_cr_post_0 <- lmer(cr_rate ~ task + (1|id), data = cr_acc_CAIDE_post, REML = FALSE)
+lmm_CAIDE_cr_post_1 <- lmer(cr_rate ~ task + CAIDE + (1|id), data = cr_acc_CAIDE_post, REML = FALSE)
+lmm_CAIDE_cr_post_2 <- lmer(cr_rate ~ task * CAIDE + (1|id), data = cr_acc_CAIDE_post, REML = FALSE)
+
+anova(lmm_CAIDE_cr_post_0, lmm_CAIDE_cr_post_1, lmm_CAIDE_cr_post_2)
+```
+## Sup4 (Table S3): Between-Group Mixed-Effect Linear Regressions — CS and CR
+
+### Model 1.1a: CS Accuracy
+```{r}
+sup_4_lmm_meno_cs <- lmer(cs_rate ~ task * group_var + edu_std + (1|id), data = meno_cs_acc, REML = TRUE)
+anova(sup_4_lmm_meno_cs, type = "III")
+summary(sup_4_lmm_meno_cs)$coefficients
+
+sjPlot::tab_model(sup_4_lmm_meno_cs,
+                  dv.labels = "Task and Menopause Status predicting CS", p.style = "scientific_stars", df.method = "satterthwaite")
+check_collinearity(sup_4_lmm_meno_cs)
+
+sup_4_out_EM_means_lmm_meno_cs <- bind_rows(
+  as.data.frame(emmeans(sup_4_lmm_meno_cs, pairwise ~ task)),
+  as.data.frame(emmeans(sup_4_lmm_meno_cs, pairwise ~ group_var))
+)
+sup_4_out_EM_means_lmm_meno_cs
+
+sup_4_out_EM_contrasts_lmm_meno_cs <- as.data.frame(emmeans(sup_4_lmm_meno_cs, pairwise ~ group_var | task))
+sup_4_out_EM_contrasts_lmm_meno_cs
+```
+
+#### Plot: Main Effects — CS
+```{r}
+effect_plot(sup_4_lmm_meno_cs, pred = group_var, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Menopause Group", y.label = "Correct Source Accuracy") +
+  scale_x_discrete(labels = c("Premenopausal", "Postmenopausal")) +
+  theme_pubclean()
+
+effect_plot(sup_4_lmm_meno_cs, pred = task, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Task Difficulty", y.label = "Correct Source Accuracy") +
+  scale_x_discrete(labels = c("Easy", "Hard")) +
+  theme_pubclean()
+```
+
+### Model 1.1b: CR Accuracy
+```{r}
+sup_4_lmm_meno_cr <- lmer(cr_rate ~ task * group_var + edu_std + (1|id), data = meno_cr_acc, REML = TRUE)
+anova(sup_4_lmm_meno_cr, type = "III")
+summary(sup_4_lmm_meno_cr)$coefficients
+
+sjPlot::tab_model(sup_4_lmm_meno_cr,
+                  dv.labels = "Task and Menopause Status Predicting CR", p.style = "scientific_stars")
+check_collinearity(sup_4_lmm_meno_cr)
+
+sup_4_out_EM_means_lmm_meno_cr <- bind_rows(
+  as.data.frame(emmeans(sup_4_lmm_meno_cr, pairwise ~ task)),
+  as.data.frame(emmeans(sup_4_lmm_meno_cr, pairwise ~ group_var))
+)
+sup_4_out_EM_means_lmm_meno_cr
+
+sup_4_out_EM_contrasts_lmm_meno_cr <- as.data.frame(emmeans(sup_4_lmm_meno_cr, pairwise ~ group_var | task))
+sup_4_out_EM_contrasts_lmm_meno_cr
+```
+
+#### Plot: Main Effects — CR
+```{r}
+effect_plot(sup_4_lmm_meno_cr, pred = group_var, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Menopause Group", y.label = "Correct Rejection Accuracy") +
+  scale_x_discrete(labels = c("Premenopausal", "Postmenopausal")) +
+  theme_pubclean()
+
+effect_plot(sup_4_lmm_meno_cr, pred = task, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Task Difficulty", y.label = "Correct Rejection Accuracy") +
+  scale_x_discrete(labels = c("Easy", "Hard")) +
+  theme_pubclean()
+```
+
+
+
+
+## Sup5 (Table S4): Stepwise Regression — CS
+```{r}
+full.model_cs <- lmer(cs_rate ~ task * group_var * s2_age_std + edu_std + (1|id), data = meno_cs_acc, REML=TRUE)
+fixmodel_cs <- lm(formula(full.model_cs, fixed.only=TRUE), data=eval(getCall(full.model_cs)$data))
+step(fixmodel_cs)
+
+stepwise_cs <- lmer(cs_rate ~ task + group_var + s2_age_std + edu_std + task:group_var + (1|id), data = meno_cs_acc, REML=TRUE)
+sjPlot::tab_model(stepwise_cs, dv.labels = "Stepwise model predicting CS", p.style = "scientific_stars", df.method = "satterthwaite")
+```
+
+## Sup6 (Table S5): Stepwise Regression — CR
+```{r}
+full.model_cr <- lmer(cr_rate ~ task * group_var * s2_age_std + edu_std + (1|id), data = meno_cr_acc, REML=TRUE)
+fixmodel_cr <- lm(formula(full.model_cr, fixed.only=TRUE), data=eval(getCall(full.model_cr)$data))
+step(fixmodel_cr)
+
+stepwise_cr <- lmer(cr_rate ~ task + s2_age_std + (1|id), data = meno_cr_acc, REML=TRUE)
+sjPlot::tab_model(stepwise_cr, dv.labels = "Stepwise model predicting CR", p.style = "scientific_stars", df.method = "satterthwaite")
+```
+
+## Sup7 (Table S6): Post Hoc — Interaction Between Age at FMP and CAIDE (CS)
+
+```{r}
+age_FMP <- cleaned_data_df %>%
+  select(id, group_var, CAIDE, edu, s2_age, s2_fmp_mths) %>%
+  filter(group_var == "post") %>%
+  mutate(age_fmp = s2_age - s2_fmp_mths / 12)
+
+cor.test(age_FMP$s2_age, age_FMP$age_fmp)
+cor.test(as.numeric(age_FMP$CAIDE), age_FMP$age_fmp)
+```
+
+Create df: Merge FMP data with cs dataframe
+```{r}
+x <- age_FMP %>% select(id, s2_age, edu, age_fmp)
+fmp_age_cs_df <- merge(x, cs_acc_CAIDE_post, by = "id",all=FALSE)
+fmp_age_cs_df$s2_age_bin_2 <- as.numeric(cut_number(fmp_age_cs_df$s2_age,3))
+```
+
+```{r}
+age_fmp_CS_plot <- ggplot(fmp_age_cs_df, aes(x = age_fmp, y = cs_rate, color = as.factor(s2_age_bin_2))) +
+  facet_grid(~task) +
+  geom_point() +
+  geom_smooth(method = lm) +
+  scale_y_continuous(name = "CS Rate", limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_x_continuous(name = "FMP (Age)") +
+  scale_colour_manual(values = c("green4", "orange", "red3"), labels = c("Below -1 SD", "Within ±1 SD", "Above +1 SD")) +
+  labs(colour = "Age") +
+  theme_pubclean() +
+  theme(legend.position = "bottom")
+
+age_fmp_CS_plot
+```
+
+```{r}
+cs_acc_CAIDE_fmp_post <- merge(cs_acc_CAIDE_post, age_FMP %>% select(id, age_fmp), by = "id") %>%
+  na.omit() %>%
+  mutate(CAIDE = factor(CAIDE, levels = c("4","5","6","7","8","9","10")))
+
+r_helmert_1 <- matrix(c(
+  -1/2, 1/2, 0, 0, 0, 0, 0,
+  -1/3, -1/3, 2/3, 0, 0, 0, 0,
+  -1/4, -1/4, -1/4, 3/4, 0, 0, 0,
+  -1/5, -1/5, -1/5, -1/5, 4/5, 0, 0,
+  -1/6, -1/6, -1/6, -1/6, -1/6, 5/6, 0,
+  -1/7, -1/7, -1/7, -1/7, -1/7, -1/7, 6/7
+), ncol = 6)
+
+contrasts(cs_acc_CAIDE_fmp_post$task) <- contr.sum(2)
+contrasts(cs_acc_CAIDE_fmp_post$CAIDE) <- r_helmert_1
+```
+
+```{r}
+lmm_CAIDE_cs_post_fmp0 <- lmer(cs_rate ~ task + CAIDE + (1|id), data = cs_acc_CAIDE_fmp_post, REML=FALSE)
+lmm_CAIDE_cs_post_fmp1 <- lmer(cs_rate ~ task + CAIDE + age_fmp + (1|id), data = cs_acc_CAIDE_fmp_post, REML=FALSE)
+lmm_CAIDE_cs_post_fmp2 <- lmer(cs_rate ~ task + CAIDE * age_fmp + (1|id), data = cs_acc_CAIDE_fmp_post, REML=FALSE)
+
+anova(lmm_CAIDE_cs_post_fmp0, lmm_CAIDE_cs_post_fmp1, lmm_CAIDE_cs_post_fmp2)
+```
+
+```{r}
+lmm_CAIDE_cs_post_fmp2 <- lmer(cs_rate ~ task + CAIDE * age_fmp + (1|id), data = cs_acc_CAIDE_fmp_post, REML=TRUE)
+anova(lmm_CAIDE_cs_post_fmp2, type = "III")
+summary(lmm_CAIDE_cs_post_fmp2)$coefficients
+
+sjPlot::tab_model(lmm_CAIDE_cs_post_fmp2, dv.labels = "Task, CAIDE and FMP predicting CS", p.style = "scientific_stars", df.method = "satterthwaite")
+```
+
+## Sup8 (Table S7): Mediation Analysis — CAIDE
+```{r}
+meno_cs_CAIDE_acc <- cleaned_data_df %>%
+  select(id, group_var, CAIDE_no_age, cs_rate_easy, cs_rate_hard) %>%
+  pivot_longer(!c(id, group_var, CAIDE_no_age), names_to = "task", values_to = "cs_rate") %>%
+  mutate(task = str_replace_all(task, "cs_rate_", ""),
+         task = factor(task, levels = c("easy", "hard")),
+         CAIDE_no_age = factor(CAIDE_no_age, levels = c("0","1","2","3","4","5","6")))
+
+r_helmert_1 <- matrix(c(
+  -1/2, 1/2, 0, 0, 0, 0, 0,
+  -1/3, -1/3, 2/3, 0, 0, 0, 0,
+  -1/4, -1/4, -1/4, 3/4, 0, 0, 0,
+  -1/5, -1/5, -1/5, -1/5, 4/5, 0, 0,
+  -1/6, -1/6, -1/6, -1/6, -1/6, 5/6, 0,
+  -1/7, -1/7, -1/7, -1/7, -1/7, -1/7, 6/7
+), ncol = 6)
+
+contrasts(meno_cs_CAIDE_acc$task) <- contr.sum(2)
+contrasts(meno_cs_CAIDE_acc$group_var) <- contr.sum(2)
+contrasts(meno_cs_CAIDE_acc$CAIDE_no_age) <- r_helmert_1
+```
+
+### CAIDE as factor (Table S7)
+```{r}
+# Required libraries
+library(nnet)
+library(lme4)
+library(sjPlot)
+
+# Path a: group_var → CAIDE_no_age
+path_a <- multinom(CAIDE_no_age ~ group_var, data = meno_cs_CAIDE_acc)
+summary(path_a)
+a_coefs <- as.numeric(summary(path_a)$coefficients[, "group_var1"])
+
+# Path b + c': CAIDE_no_age + group_var → cs_rate
+path_b_c <- lmer(cs_rate ~ group_var + CAIDE_no_age + task + (1 | id), 
+                 data = meno_cs_CAIDE_acc, REML = TRUE)
+summary(path_b_c)
+
+# Coefficients
+fixef_coeffs <- fixef(path_b_c)
+b_coef <- as.numeric(fixef_coeffs[grep("^CAIDE_no_age", names(fixef_coeffs))])
+c_prime_coef <- as.numeric(fixef_coeffs[grep("^group_var", names(fixef_coeffs))])
+
+# Indirect effect (Path a * b)
+indirect_effects <- a_coefs * b_coef
+total_indirect_effect <- sum(indirect_effects)
+
+# Table S7 output
+cat("=== Table S7 Mediation Summary ===\n")
+cat("Indirect effects (a * b):\n"); print(indirect_effects)
+cat("Total indirect effect:", total_indirect_effect, "\n")
+cat("Direct effect (Path c′):", c_prime_coef, "\n")
+
+
+sjPlot::tab_model(path_b_c,
+  dv.labels = "CS Accuracy ~ CAIDE + Menopause + Task",
+  p.style = "scientific_stars",
+  df.method = "satterthwaite")
+```
+
+### Mediation analysis (manual and accounting for task using mixed model)
+```{r}
+meno_cs_CAIDE_acc$CAIDE_no_age <- as.numeric(meno_cs_CAIDE_acc$CAIDE_no_age)
+# Load necessary libraries
+library(nnet)   # For multinomial logistic regression
+library(lme4)   # For linear mixed-effects models
+library(boot)   # For bootstrapping
+
+# 1. Path a: group_var (IV) → CAIDE (Mediator)
+# `task` is excluded here because it is not relevant for predicting CAIDE
+path_a <- multinom(CAIDE_no_age ~ group_var, data = meno_cs_CAIDE_acc)
+summary(path_a)
+a_coefs <- as.numeric(summary(path_a)$coefficients[, "group_var1"])
+
+# 2. Path b and Path c': CAIDE (Mediator) + group_var (IV) → cs_rate (DV)
+# Include `task` only when predicting cs_rate
+path_b_c <- lmer(cs_rate ~ group_var + CAIDE_no_age + task + (1 | id), 
+                 data = subset(meno_cs_CAIDE_acc, task == "easy" | task == "hard"),
+                 REML = TRUE)
+summary(path_b_c)
+
+# Extract coefficients for Path b (CAIDE → cs_rate) and Path c' (group_var → cs_rate)
+fixef_coeffs <- fixef(path_b_c)
+b_coef <- as.numeric(fixef_coeffs[grep("^CAIDE_no_age", names(fixef_coeffs))])
+c_prime_coef <- as.numeric(fixef_coeffs[grep("^group_var", names(fixef_coeffs))])
+
+# 3. Calculate Indirect Effects
+indirect_effects <- a_coefs * b_coef  # Element-wise product of Path a and Path b coefficients
+total_indirect_effect <- sum(indirect_effects)  # Sum of all indirect effects
+
+# 4. Bootstrapping to Calculate Confidence Intervals
+boot_mediation <- function(data, indices) {
+  d <- data[indices, ]
+  
+  # Path a
+  path_a <- multinom(CAIDE_no_age ~ group_var, data = d)
+  a_coefs <- as.numeric(summary(path_a)$coefficients[, "group_var1"])
+  
+  # Path b (task included only for cs_rate)
+  path_b_c <- lmer(cs_rate ~ group_var + CAIDE_no_age + task + (1 | id), 
+                   data = subset(d, task == "easy" | task == "hard"),
+                   REML = TRUE)
+  fixef_coeffs <- fixef(path_b_c)
+  b_coef <- as.numeric(fixef_coeffs[grep("^CAIDE_no_age", names(fixef_coeffs))])
+  
+  # Indirect Effects
+  sum(a_coefs * b_coef)
+}
+
+# set.seed(123)
+# boot_results <- boot(meno_cs_CAIDE_acc, boot_mediation, R = 1000)
+#boot_ci <- boot.ci(boot_results, type = "perc")
+
+# Outputs
+print(indirect_effects)          # Indirect effects for each level of CAIDE
+print(total_indirect_effect)     # Total indirect effect
+print(c_prime_coef)              # Direct effect of group_var on cs_rate
+#print(boot_ci)                   # Bootstrapped confidence intervals
+
+
+
+confint(path_a) # Confidence intervals for multinomial logistic regression
+confint(path_b_c) # Confidence intervals for mixed-effects model
+
+
+
+table(meno_cs_CAIDE_acc$group_var, meno_cs_CAIDE_acc$CAIDE_no_age)
+```
+
+### Assumption checking
+```{r}
+# Load necessary libraries
+library(car)       # For VIF (multicollinearity check)
+library(nnet)      # For multinomial logistic regression
+library(lme4)      # For linear mixed-effects models
+library(lmtest)    # For heteroscedasticity test
+library(ggplot2)   # For visualization
+library(boot)      # For bootstrapping
+library(dplyr)     # For data manipulation
+
+# Ensure group_var and CAIDE_no_age are factors (categorical variables)
+meno_cs_CAIDE_acc <- meno_cs_CAIDE_acc %>%
+  mutate(
+    group_var = as.factor(group_var),  # Menopause status (Pre vs. Post)
+    CAIDE_no_age = as.factor(CAIDE_no_age)  # Categorical CAIDE risk
+  )
+
+# === 1. CHECK MULTICOLLINEARITY ===
+# Use a Chi-Square test instead of correlation/VIF since both variables are categorical
+chi_sq_test <- chisq.test(table(meno_cs_CAIDE_acc$group_var, meno_cs_CAIDE_acc$CAIDE_no_age))
+
+# Print Chi-Square test results
+cat("\n=== MULTICOLLINEARITY CHECK (Chi-Square Test) ===\n")
+print(chi_sq_test)
+table(meno_cs_CAIDE_acc$group_var, meno_cs_CAIDE_acc$CAIDE_no_age)
+# === 2. CHECK LINEARITY ===
+# Since CAIDE_no_age is categorical, use boxplots instead of scatterplots
+ggplot(meno_cs_CAIDE_acc, aes(x = CAIDE_no_age, y = cs_rate)) + 
+  geom_boxplot() + ggtitle("Boxplot: CAIDE Category vs. CS Performance")
+
+ggplot(meno_cs_CAIDE_acc, aes(x = group_var, y = cs_rate)) + 
+  geom_boxplot() + ggtitle("Boxplot: Menopause Stage vs. CS Performance")
+
+# Residual plot for categorical predictors
+fit <- lmer(cs_rate ~ group_var + CAIDE_no_age + task + (1 | id), data = meno_cs_CAIDE_acc, REML = TRUE)
+residuals_df <- data.frame(Fitted = fitted(fit), Residuals = resid(fit))
+
+ggplot(residuals_df, aes(x = Fitted, y = Residuals)) + 
+  geom_point() + geom_smooth(method = "lm") + ggtitle("Residual Plot")
+
+# === 3. TEST FOR INTERACTION EFFECT (Menopause Stage * CAIDE) ===
+interaction_model <- lmer(cs_rate ~ group_var * CAIDE_no_age + task + (1 | id), 
+                          data = meno_cs_CAIDE_acc, REML = TRUE)
+interaction_summary <- summary(interaction_model)
+
+cat("\n=== TEST FOR INTERACTION ===\n")
+print(interaction_summary)
+
+# === 4. CHECK FOR HOMOSCEDASTICITY (Equal Variance of Residuals) ===
+
+library(DHARMa)
+
+# Simulate residuals
+sim_res <- simulateResiduals(fittedModel = fit, n = 1000)
+
+# Plot diagnostic residuals
+plot(sim_res)
+
+```
+
+
+
+## Sup9 (Table S8): Mixed-Effects Models — CAIDE Continuous Predicting CS
+
+### Pre-Menopausal Group
+```{r}
+cs_acc_CAIDE_pre <- cleaned_data_df %>%
+  select(id, group_var, CAIDE, cs_rate_easy, cs_rate_hard) %>%
+  filter(group_var == "pre") %>%
+  mutate(CAIDE = as.numeric(CAIDE)) %>%
+  pivot_longer(!c(id, group_var, CAIDE), names_to = "task", values_to = "cs_rate") %>%
+  mutate(task = str_replace_all(task, "cs_rate_", ""),
+         task = factor(task, levels = c("easy", "hard")))
+
+contrasts(cs_acc_CAIDE_pre$task) <- contr.sum(2)
+
+lmm_CAIDE_cs_pre <- lmer(cs_rate ~ task + CAIDE + (1 | id), data = cs_acc_CAIDE_pre, REML = TRUE)
+
+anova(lmm_CAIDE_cs_pre, type = "III")
+summary(lmm_CAIDE_cs_pre)$coefficients
+
+sjPlot::tab_model(lmm_CAIDE_cs_pre,
+  dv.labels = "Pre-Meno:\nTask and CAIDE Risk score predicting CS", p.style = "scientific_stars", df.method = "satterthwaite")
+
+check_collinearity(lmm_CAIDE_cs_pre)
+check_outliers(lmm_CAIDE_cs_pre)
+```
+
+#### Plot — Pre-Meno
+```{r}
+effect_plot(lmm_CAIDE_cs_pre, pred = task, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Task Difficulty", y.label = "Correct Source Accuracy") +
+  scale_x_discrete(labels = c("Easy", "Hard")) + theme_pubclean()
+
+effect_plot(lmm_CAIDE_cs_pre, pred = CAIDE, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "CAIDE", y.label = "Correct Source Accuracy") +
+  theme_pubclean()
+```
+
+### Post-Menopausal Group
+```{r}
+cs_acc_CAIDE_post <- cleaned_data_df %>%
+    select(id, group_var, CAIDE, cs_rate_easy, cs_rate_hard) %>%
+    mutate_at("CAIDE", ~as.numeric(.)) %>%
+    filter(group_var=="post" & CAIDE <11) %>%
+      pivot_longer(!c(id, group_var, CAIDE), names_to = "task", values_to = "cs_rate") %>%
+    mutate(task = str_replace_all(task, "cs_rate_", ""),
+         task = factor(task, levels = c("easy", "hard")))
+
+
+contrasts(cs_acc_CAIDE_post$task) <- contr.sum(2)
+
+lmm_CAIDE_cs_post <- lmer(cs_rate ~ task + CAIDE + (1 | id), data = cs_acc_CAIDE_post, REML = TRUE)
+
+anova(lmm_CAIDE_cs_post, type = "III")
+summary(lmm_CAIDE_cs_post)$coefficients
+
+sjPlot::tab_model(lmm_CAIDE_cs_post,
+  dv.labels = "Post-Meno:\nTask and CAIDE Risk score predicting CS", p.style = "scientific_stars", df.method = "satterthwaite")
+
+check_collinearity(lmm_CAIDE_cs_post)
+check_outliers(lmm_CAIDE_cs_post)
+```
+
+#### Plot — Post-Meno
+```{r}
+effect_plot(lmm_CAIDE_cs_post, pred = task, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "Task Difficulty", y.label = "Correct Source Accuracy") +
+  scale_x_discrete(labels = c("Easy", "Hard")) + theme_pubclean()
+
+effect_plot(lmm_CAIDE_cs_post, pred = CAIDE, plot.points = TRUE, jitter = 0.02,
+            line.thickness = 0.7, x.label = "CAIDE", y.label = "Correct Source Accuracy") +
+  theme_pubclean()
+```
+
+
+
+
+
+
+
